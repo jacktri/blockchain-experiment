@@ -1,59 +1,82 @@
 package com.savory.chain;
 
-import static com.savory.chain.BlockChainValidator.isChainValid;
-import static com.savory.chain.StringUtil.jsonToBlocks;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static com.savory.chain.BlockChainUtil.addBlock;
+import static com.savory.chain.BlockChainUtil.isChainValid;
+import static com.savory.chain.ChainApplication.GENESIS_TRANSACTION;
+import static com.savory.chain.ChainApplication.UTXOS;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.List;
+import java.security.Security;
 
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.springframework.core.io.ClassPathResource;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.savory.chain.currency.Transaction;
+import com.savory.chain.currency.TransactionOutput;
+import com.savory.chain.currency.Wallet;
 
 public class ChainApplicationTests {
 
-    private ObjectMapper objectMapper = new ObjectMapper();
+    static {
+        Security.addProvider(new BouncyCastleProvider());
+    }
 
-    @Test
-    public void generateBlockChain() throws IOException {
-        List<Block> blockChain = new ArrayList<>();
-        int difficulty = 5;
-        blockChain.add(new Block("Hi im the first block", "0"));
-        blockChain.get(0).mineBlock(difficulty);
+    private static Block genesis = new Block("0");
+    private static Wallet walletA = new Wallet();
+    private static Wallet walletB = new Wallet();
 
-        blockChain.add(new Block("Yo im the second block",blockChain.get(blockChain.size()-1).getHash()));
-        blockChain.get(1).mineBlock(difficulty);
+    @BeforeAll
+    public static void setUp() {
+        Wallet coinbase = new Wallet();
+        GENESIS_TRANSACTION = new Transaction(coinbase.getPublicKey(), walletA.getPublicKey(), 100f, null);
+        GENESIS_TRANSACTION.generateSignature(coinbase.getPrivateKey());  //manually sign the genesis transaction
+        GENESIS_TRANSACTION.setTransactionId("0"); //manually set the transaction id
+        GENESIS_TRANSACTION.getOutputs().add(new TransactionOutput(GENESIS_TRANSACTION.getReciepient(),
+            GENESIS_TRANSACTION.getValue(), GENESIS_TRANSACTION.getTransactionId())); //manually add the Transactions Output
 
-        blockChain.add(new Block("Hey im the third block",blockChain.get(blockChain.size()-1).getHash()));
-        blockChain.get(2).mineBlock(difficulty);
+        UTXOS.put(GENESIS_TRANSACTION.getOutputs().get(0).getId(), GENESIS_TRANSACTION.getOutputs().get(0)); //its important to store our first transaction in the UTXOs list.
 
-        String blockchainJson = objectMapper.writeValueAsString(blockChain);
-        assertTrue(isChainValid(difficulty, blockChain));
-        List<Block> result = jsonToBlocks(blockchainJson);
-        assertEquals(blockChain, result);
+        System.out.println("Creating and Mining Genesis block... ");
+        Block genesis = new Block("0");
+        genesis.addTransaction(GENESIS_TRANSACTION);
+        addBlock(genesis);
     }
 
     @Test
-    public void isBlockChainValidTest() throws IOException {
-        File jsonFile = new ClassPathResource("test.json").getFile();
-        int difficulty = 5;
-        List<Block> blockChain = objectMapper.readValue(jsonFile, objectMapper.getTypeFactory().constructCollectionType(List.class, Block.class));
-        assertTrue(isChainValid(difficulty, blockChain));
+    public void transactionTest() {
+        Security.addProvider(new BouncyCastleProvider());
+        Wallet walletA = new Wallet();
+        Wallet walletB = new Wallet();
+
+        Transaction transaction = new Transaction(walletA.getPublicKey(), walletB.getPublicKey(), 5, null);
+        transaction.generateSignature(walletA.getPrivateKey());
+        assertTrue(transaction.verifiySignature());
     }
 
     @Test
-    public void invalidBlockTest() throws IOException {
-        File jsonFile = new ClassPathResource("invalid.json").getFile();
-        int difficulty = 5;
-        List<Block> blockChain = objectMapper.readValue(jsonFile, objectMapper.getTypeFactory().constructCollectionType(List.class, Block.class));
-        assertFalse(isChainValid(difficulty, blockChain));
-    }
+    public void transactionTestWithGenesisTransaction() {
+        Block block1 = new Block(genesis.getHash());
+        System.out.println("\nWalletA's balance is: " + walletA.getBalance());
+        System.out.println("\nWalletA is Attempting to send funds (40) to WalletB...");
+        block1.addTransaction(walletA.sendFunds(walletB.getPublicKey(), 40f));
+        addBlock(block1);
+        System.out.println("\nWalletA's balance is: " + walletA.getBalance());
+        System.out.println("WalletB's balance is: " + walletB.getBalance());
 
+        Block block2 = new Block(block1.getHash());
+        System.out.println("\nWalletA Attempting to send more funds (1000) than it has...");
+        block2.addTransaction(walletA.sendFunds(walletB.getPublicKey(), 1000f));
+        addBlock(block2);
+        System.out.println("\nWalletA's balance is: " + walletA.getBalance());
+        System.out.println("WalletB's balance is: " + walletB.getBalance());
+
+        Block block3 = new Block(block2.getHash());
+        System.out.println("\nWalletB is Attempting to send funds (20) to WalletA...");
+        block3.addTransaction(walletB.sendFunds(walletA.getPublicKey(), 20f));
+        System.out.println("\nWalletA's balance is: " + walletA.getBalance());
+        System.out.println("WalletB's balance is: " + walletB.getBalance());
+
+        assertTrue(isChainValid());
+    }
 }
